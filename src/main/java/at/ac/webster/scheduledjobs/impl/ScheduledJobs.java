@@ -9,34 +9,23 @@ import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
 import org.quartz.SimpleScheduleBuilder;
 import org.quartz.TriggerBuilder;
-import org.quartz.impl.StdSchedulerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.InputStream;
+import javax.inject.Inject;
 
 public class ScheduledJobs implements IScheduledJobs {
-    private final Scheduler scheduler;
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
 
+    @Inject
+    Scheduler scheduler;
+
     public ScheduledJobs() {
-        this(null);
+        this(new StandardJobExecutionFactory());
     }
 
-    public ScheduledJobs(InputStream config) {
-        this(new StdSchedulerFactory(), new StandardJobExecutionFactory(), config);
-    }
-
-    public ScheduledJobs(IJobExecutionFactory jobFactory, InputStream config) {
-        this(new StdSchedulerFactory(), jobFactory, config);
-    }
-
-    public ScheduledJobs(StdSchedulerFactory schedulerFactory, IJobExecutionFactory executionFactory, InputStream config) {
+    public ScheduledJobs(IJobExecutionFactory executionFactory) {
         try {
-            if (config != null) {
-                schedulerFactory.initialize(config);
-            }
-            this.scheduler = schedulerFactory.getScheduler();
             scheduler.setJobFactory(new ExtendedJobFactory(executionFactory));
             scheduler.start();
         } catch (SchedulerException e) {
