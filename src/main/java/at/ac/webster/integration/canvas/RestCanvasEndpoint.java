@@ -23,7 +23,23 @@ public class RestCanvasEndpoint implements IRestCanvasEndpoint {
     }
 
     @Override
+    public Response getUser(String token) {
+        return Response.ok(canvasDataManager.getCurrentUser(token)).build();
+    }
+
+    @Override
+    public Response removeUser(String userId) {
+        canvasDataManager.removeUser(userId);
+        return Response.ok().build();
+    }
+
+    @Override
     public Response getGrades(String userId) {
         return Response.ok(canvasDataManager.fetchGrades(userId)).build();
+    }
+
+    @Override
+    public Response getAssignment(String assignmentId) {
+        return Response.ok(canvasDataManager.fetchAssignment(assignmentId)).build();
     }
 }

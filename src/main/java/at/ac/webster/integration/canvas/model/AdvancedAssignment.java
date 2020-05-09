@@ -10,4 +10,5 @@ import lombok.Setter;
 @Getter
 public class AdvancedAssignment extends Assignment {
     private boolean isUserBeenInformed = false;
+    private String assignmentId;
 }

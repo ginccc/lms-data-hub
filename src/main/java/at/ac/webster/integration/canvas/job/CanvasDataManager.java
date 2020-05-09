@@ -31,6 +31,7 @@ import org.jboss.logging.Logger;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
+import javax.ws.rs.InternalServerErrorException;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
@@ -57,6 +58,8 @@ public class CanvasDataManager implements ICanvasDataManager {
     private final Mailer mailer;
     private final IJsonSerialization jsonSerialization;
     private final CanvasApiFactory apiFactory = new CanvasApiFactory(canvasBaseUrl);
+    private final String assignmentBotUrl = "http://localhost:7070/chat/unrestricted/5eb6f284da0c202cf223ecf0";
+    private final String gradeBotUrl = "http://localhost:7070/chat/unrestricted/5eb6ca3ada0c202cf223ecc2";
 
     @Inject
     public CanvasDataManager(MongoClient mongoClient, Mailer mailer, IJsonSerialization jsonSerialization) {
@@ -89,12 +92,12 @@ public class CanvasDataManager implements ICanvasDataManager {
 
     @Override
     public void fetchAndUpdateDataFromCanvas(String token) throws IOException {
-        OauthToken oauthToken = new NonRefreshableOauthToken(token);
+        OauthToken oauthToken = getOauthByToken(token);
         var assignmentReader = apiFactory.getReader(AssignmentReader.class, oauthToken);
         var enrollmentReader = apiFactory.getReader(EnrollmentReader.class, oauthToken);
         var courseReader = apiFactory.getReader(CourseReader.class, oauthToken);
 
-        var thisUser = fetchUser(apiFactory, oauthToken);
+        var thisUser = fetchUser(oauthToken);
 
         if (thisUser.isPresent()) {
             User user = thisUser.get();
@@ -110,13 +113,38 @@ public class CanvasDataManager implements ICanvasDataManager {
         }
     }
 
+    private OauthToken getOauthByToken(String token) {
+        return new NonRefreshableOauthToken(token);
+    }
+
     @Override
     public Grade fetchGrades(String userId) {
         Enrollment enrollment = canvasEnrollments.find(new Document("userId", userId)).first();
         return enrollment != null ? enrollment.getGrades() : null;
     }
 
-    private Optional<User> fetchUser(CanvasApiFactory apiFactory, OauthToken oauthToken) throws IOException {
+    @Override
+    public User getCurrentUser(String token) {
+        try {
+            Optional<User> user = fetchUser(new NonRefreshableOauthToken(token));
+            return user.orElse(null);
+        } catch (IOException e) {
+            log.error(e.getLocalizedMessage(), e);
+            throw new InternalServerErrorException();
+        }
+    }
+
+    @Override
+    public void removeUser(String userId) {
+        canvasUsers.deleteOne(new Document("_id", userId));
+    }
+
+    @Override
+    public Assignment fetchAssignment(String assignmentId) {
+        return canvasAssignments.find(new Document("assignmentId", assignmentId)).first();
+    }
+
+    private Optional<User> fetchUser(OauthToken oauthToken) throws IOException {
         UserReader userReader = apiFactory.getReader(UserReader.class, oauthToken);
         return userReader.showUserDetails("self");
     }
@@ -154,7 +182,7 @@ public class CanvasDataManager implements ICanvasDataManager {
                     LocalDate twoWeeksFromNow = now.plusWeeks(2);
                     LocalDate assignmentDueDate = convertToLocalDate(assignment.getDueAt());
                     if (now.isBefore(assignmentDueDate) && twoWeeksFromNow.isAfter(assignmentDueDate)) {
-                        informStudentAboutEvent(course);
+                        informStudentAboutAssignment(course.getId(), assignment.getId());
                         newAssignment.setUserBeenInformed(true);
                         setAssignment(query, newAssignment, false);
                     }
@@ -164,6 +192,7 @@ public class CanvasDataManager implements ICanvasDataManager {
     }
 
     private void setAssignment(Document query, AdvancedAssignment assignmentUpdate, boolean isFirstTime) {
+        assignmentUpdate.setAssignmentId(assignmentUpdate.getId().toString());
         if (isFirstTime) {
             canvasAssignments.insertOne(assignmentUpdate);
         } else {
@@ -171,16 +200,17 @@ public class CanvasDataManager implements ICanvasDataManager {
         }
     }
 
-    private void informStudentAboutEvent(Course course) {
-        var user = canvasEnrollments.find(new Document("courseId", course.getId())).first().getUser();
+    private void informStudentAboutAssignment(Integer courseId, Integer assignmentId) {
+        var user = canvasEnrollments.find(new Document("courseId", courseId)).first().getUser();
 
         if (user != null) {
             var name = user.getName();
             var firstName = name.substring(0, name.indexOf(" "));
             var subject = "There is an upcoming assignment.. ";
-            var body = String.format("Hi %s! Would you like to find someone for help? Let's talk here: <link>   Yours Truly, Webster Bot", firstName);
+            var link = assignmentBotUrl + "#" + assignmentId;
+            var body = String.format("Hi %s!<br><br>Would you like to find someone for help?<br><br>Let's talk here:<br><br>%s<br><br>Yours Truly,<br>Webster Bot", firstName, link);
             String sendTo = user.getLoginId();
-            mailer.send(Mail.withText(sendTo, subject, body));
+            mailer.send(Mail.withHtml(sendTo, subject, body));
             log.info("Email about Assignment was send to " + sendTo);
         }
     }
@@ -216,8 +246,9 @@ public class CanvasDataManager implements ICanvasDataManager {
         var name = user.getName();
         var firstName = name.substring(0, name.indexOf(" "));
         var subject = "Your Grades are here.. ";
-        var body = String.format("Hi %s! Let's talk about it. Click here: <link>  Yours Truly, Webster Bot", firstName);
-        mailer.send(Mail.withText(sendTo, subject, body));
+        var link = gradeBotUrl + "#" + user.getId();
+        var body = String.format("Hi %s!<br><br>Let's talk about it.<br><br>Click here:<br><br>%s<br><br>Yours Truly, <br>Webster Bot", firstName, link);
+        mailer.send(Mail.withHtml(sendTo, subject, body));
         log.info("Email about Grades was send to " + sendTo);
     }
 }
